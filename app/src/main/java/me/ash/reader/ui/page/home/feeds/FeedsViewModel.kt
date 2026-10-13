@@ -14,6 +14,9 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
+import me.ash.reader.domain.data.SyncProgress
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
@@ -85,6 +88,12 @@ class FeedsViewModel @Inject constructor(
     }
 
     private val accountFlow = accountService.currentAccountFlow
+
+    val syncProgressFlow = workManager.getWorkInfosByTagFlow(SyncWorker.SYNC_TAG)
+        .combine(accountService.currentAccountIdFlow) { workInfos, accountId ->
+            SyncProgress.fromWorkInfos(workInfos, accountId)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SyncProgress())
 
     init {
         viewModelScope.launch {

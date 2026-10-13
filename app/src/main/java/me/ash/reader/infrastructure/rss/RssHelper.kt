@@ -10,21 +10,23 @@ import com.rometools.rome.feed.synd.SyndFeed
 import com.rometools.rome.feed.synd.SyndImageImpl
 import com.rometools.rome.io.SyndFeedInput
 import com.rometools.rome.io.XmlReader
-import java.io.ByteArrayInputStream
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.ByteArrayInputStream
 import java.nio.charset.Charset
 import java.util.*
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import me.ash.reader.domain.model.article.Article
 import me.ash.reader.domain.model.feed.Feed
 import me.ash.reader.domain.repository.FeedDao
 import me.ash.reader.infrastructure.di.IODispatcher
 import me.ash.reader.infrastructure.html.Readability
-import me.ash.reader.ui.ext.currentAccountId
+import me.ash.reader.infrastructure.net.awaitBody
 import me.ash.reader.ui.ext.decodeHTML
-import me.ash.reader.ui.ext.extractDomain
 import me.ash.reader.ui.ext.isFuture
 import me.ash.reader.ui.ext.spacerDollar
 import okhttp3.OkHttpClient
@@ -33,6 +35,7 @@ import okhttp3.executeAsync
 import okhttp3.internal.commonIsSuccessful
 import okio.IOException
 import org.jsoup.Jsoup
+import timber.log.Timber
 
 val enclosureRegex = """<enclosure\s+url="([^"]+)"\s+type=".*"\s*/>""".toRegex()
 val imgRegex = """img.*?src=(["'])((?!data).*?)\1""".toRegex(RegexOption.DOT_MATCHES_ALL)
@@ -45,6 +48,10 @@ constructor(
     @IODispatcher private val ioDispatcher: CoroutineDispatcher,
     private val okHttpClient: OkHttpClient,
 ) {
+
+    private val feedClient by lazy {
+        okHttpClient.newBuilder().callTimeout(20, TimeUnit.SECONDS).build()
+    }
 
     data class SearchFeedResult(
         val feed: SyndFeed,
@@ -167,33 +174,34 @@ constructor(
         feed: Feed,
         latestLink: String?,
         preDate: Date = Date(),
-    ): List<Article> =
-        try {
-            val accountId = context.currentAccountId
-            val response = response(okHttpClient, feed.url)
-            val contentType = response.header("Content-Type")
-
-            val httpContentType =
-                contentType?.let {
-                    if (it.contains("charset=", ignoreCase = true)) it
-                    else "$it; charset=UTF-8"
-                } ?: "text/xml; charset=UTF-8"
-
-            response.body.byteStream().use { inputStream ->
-                SyndFeedInput()
-                    .apply { isPreserveWireFeed = true }
-                    .build(XmlReader(inputStream, httpContentType))
-                    .entries
-                    .asSequence()
-                    .takeWhile { latestLink == null || latestLink != it.link }
-                    .map { buildArticleFromSyndEntry(feed, accountId, it, preDate) }
-                    .toList()
+        accountId: Int = feed.accountId,
+    ): List<Article> = withContext(ioDispatcher) {
+        val startedAt = System.currentTimeMillis()
+        val (body, contentType) =
+            feedClient.newCall(Request.Builder().url(feed.url).build()).awaitBody { response ->
+                if (!response.isSuccessful) throw IOException("HTTP ${response.code}: ${feed.url}")
+                response.body.bytes() to toHttpContentType(response.header("Content-Type"))
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            Log.e("RLog", "queryRssXml[${feed.name}]: ${e.message}")
-            listOf()
+        Timber.tag("FeedRefresh").d("Downloaded %s in %d ms", feed.name, System.currentTimeMillis() - startedAt)
+        coroutineContext.ensureActive()
+        val parseStartedAt = System.currentTimeMillis()
+        val currentContext = coroutineContext
+        ByteArrayInputStream(body).use { inputStream ->
+            SyndFeedInput()
+                .apply { isPreserveWireFeed = true }
+                .build(XmlReader(inputStream, contentType))
+                .entries
+                .asSequence()
+                .takeWhile { latestLink == null || latestLink != it.link }
+                .map {
+                    currentContext.ensureActive()
+                    buildArticleFromSyndEntry(feed, accountId, it, preDate)
+                }
+                .toList()
+        }.also {
+            Timber.tag("FeedRefresh").d("Parsed %s (%d articles) in %d ms", feed.name, it.size, System.currentTimeMillis() - parseStartedAt)
         }
+    }
 
     fun buildArticleFromSyndEntry(
         feed: Feed,
@@ -284,15 +292,17 @@ constructor(
 
     suspend fun queryRssIconLink(feedLink: String?): String? {
         if (feedLink.isNullOrEmpty()) return null
-        val iconFinder = BestIconFinder(okHttpClient)
-        val domain = feedLink.extractDomain()
-        return iconFinder.findBestIcon(domain ?: feedLink).also {
-            Log.i("RLog", "queryRssIconByLink: get $it from $domain")
+        return withContext(ioDispatcher) {
+            val iconFinder = BestIconFinder(okHttpClient)
+            val startedAt = System.currentTimeMillis()
+            iconFinder.findBestIcon(feedLink).also {
+                Timber.tag("FeedIcon").d("Icon lookup for %s took %d ms", feedLink, System.currentTimeMillis() - startedAt)
+            }
         }
     }
 
     suspend fun saveRssIcon(feedDao: FeedDao, feed: Feed, iconLink: String) {
-        feedDao.update(feed.copy(icon = iconLink))
+        feedDao.updateIcon(feed.id, feed.url, iconLink)
     }
 
     private suspend fun response(client: OkHttpClient, url: String): okhttp3.Response =

@@ -192,7 +192,13 @@ constructor(
                 }
 
             // Fetch the Fever favicons
-            val faviconsById = feverAPI.getFavicons().favicons?.associateBy { it.id } ?: emptyMap()
+            val localFeeds = feedDao.queryAll(accountId).associateBy { it.id }
+            val needsIcons = feedsBody.feeds.orEmpty().any {
+                localFeeds[accountId.spacerDollar(it.id!!)]?.icon.isNullOrEmpty()
+            }
+            val faviconsById = if (needsIcons) {
+                feverAPI.getFavicons().favicons?.associateBy { it.id } ?: emptyMap()
+            } else emptyMap()
             feedDao.insertOrUpdate(
                 feedsBody.feeds?.map {
                     Feed(
@@ -204,14 +210,6 @@ constructor(
                         icon = faviconsById[it.favicon_id]?.data,
                     )
                 } ?: emptyList()
-            )
-
-            // Handle empty icon for feeds
-            val noIconFeeds = feedDao.queryNoIcon(accountId)
-            feedDao.update(
-                *noIconFeeds
-                    .map { it.copy(icon = rssHelper.queryRssIconLink(it.url)) }
-                    .toTypedArray()
             )
 
             // 3. Fetch the Fever articles (up to unlimited counts)

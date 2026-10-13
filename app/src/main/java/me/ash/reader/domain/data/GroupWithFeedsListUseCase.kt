@@ -39,6 +39,10 @@ class GroupWithFeedsListUseCase @Inject constructor(
 ) {
 
     private var currentJob: Job? = null
+    private val _groupWithFeedsListFlow: MutableStateFlow<List<GroupWithFeed>> =
+        MutableStateFlow(emptyList())
+    val groupWithFeedListFlow: StateFlow<List<GroupWithFeed>> = _groupWithFeedsListFlow
+    private val feedsFlow: MutableStateFlow<List<GroupWithFeed>> = MutableStateFlow(emptyList())
     private val accountFlow = accountService.currentAccountFlow.mapNotNull { it }
 
     init {
@@ -67,12 +71,6 @@ class GroupWithFeedsListUseCase @Inject constructor(
                 }
         }
     }
-
-    private val _groupWithFeedsListFlow: MutableStateFlow<List<GroupWithFeed>> =
-        MutableStateFlow<List<GroupWithFeed>>(emptyList())
-    val groupWithFeedListFlow: StateFlow<List<GroupWithFeed>> = _groupWithFeedsListFlow
-
-    private val feedsFlow: MutableStateFlow<List<GroupWithFeed>> = MutableStateFlow(emptyList())
 
     private val defaultGroupId get() = accountService.getCurrentAccountId().getDefaultGroupId()
 

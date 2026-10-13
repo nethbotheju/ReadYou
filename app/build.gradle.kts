@@ -114,6 +114,7 @@ android {
     androidResources { generateLocaleConfig = true }
     composeCompiler { featureFlags = setOf(ComposeFeatureFlag.PausableComposition) }
     namespace = "me.ash.reader"
+    sourceSets["androidTest"].assets.srcDir("$projectDir/schemas")
 }
 
 aboutLibraries { excludeFields = arrayOf("generated") }
@@ -202,7 +203,9 @@ dependencies {
 
     // Testing
     testImplementation(libs.junit)
+    testImplementation(libs.okhttp.mockwebserver)
     androidTestImplementation(libs.junit.ext)
+    androidTestImplementation(libs.room.testing)
     androidTestImplementation(libs.espresso)
     testImplementation(libs.mockito.core)
     testImplementation(libs.mockito.junit.jupiter)

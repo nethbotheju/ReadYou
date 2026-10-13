@@ -443,24 +443,6 @@ constructor(
             val remoteGroups = async { groupWithFeedsMap.await().keys.toList() }
             val remoteFeeds = async { groupWithFeedsMap.await().values.flatten() }
 
-            // Handle empty icon for feeds
-            launch {
-                val localFeeds = feedDao.queryAll(accountId)
-                val remoteFeeds = remoteFeeds.await()
-                val newFeeds = remoteFeeds.filter { feed -> feed.id !in localFeeds.map { it.id } }
-
-                val feedsWithIconFetched =
-                    newFeeds
-                        .filter { it.icon == null }
-                        .map { feed ->
-                            async { feed.copy(icon = rssHelper.queryRssIconLink(feed.url)) }
-                        }
-                feedsWithIconFetched
-                    .awaitAll()
-                    .filterNot { it.icon.isNullOrEmpty() }
-                    .also { feedDao.update(*it.toTypedArray()) }
-            }
-
             groupDao.insertOrUpdate(remoteGroups.await())
             feedDao.insertOrUpdate(remoteFeeds.await())
 

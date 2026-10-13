@@ -388,4 +388,6 @@
     <string name="parse_full_content_desc">Fetch full articles from webpages</string>
     <string name="enable">Enable</string>
     <string name="disable">Disable</string>
+    <string name="feed_refresh_progress">Checked %1$d of %2$d feeds</string>
+    <string name="feed_refresh_failed">Refresh finished: %1$d of %2$d feeds failed</string>
 </resources>

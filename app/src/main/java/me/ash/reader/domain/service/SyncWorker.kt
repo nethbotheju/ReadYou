@@ -7,7 +7,6 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import java.util.concurrent.TimeUnit
 import me.ash.reader.domain.model.account.Account
-import me.ash.reader.infrastructure.rss.ReaderCacheHelper
 
 @HiltWorker
 class SyncWorker
@@ -16,8 +15,8 @@ constructor(
     @Assisted context: Context,
     @Assisted workerParams: WorkerParameters,
     private val rssService: RssService,
-    private val readerCacheHelper: ReaderCacheHelper,
     private val workManager: WorkManager,
+    private val accountService: AccountService,
 ) : CoroutineWorker(context, workerParams) {
 
     override suspend fun doWork(): Result {
@@ -27,30 +26,32 @@ constructor(
         val feedId = data.getString("feedId")
         val groupId = data.getString("groupId")
 
-        return rssService
-            .get()
-            .sync(accountId = accountId, feedId = feedId, groupId = groupId)
-            .also {
-                rssService.get().clearKeepArchivedArticles().forEach {
-                    readerCacheHelper.deleteCacheFor(articleId = it.id)
-                }
-                workManager
-                    .beginUniqueWork(
-                        uniqueWorkName = POST_SYNC_WORK_NAME,
-                        existingWorkPolicy = ExistingWorkPolicy.KEEP,
-                        OneTimeWorkRequestBuilder<ReaderWorker>()
-                            .addTag(READER_TAG)
-                            .addTag(ONETIME_WORK_TAG)
-                            .setBackoffCriteria(
-                                backoffPolicy = BackoffPolicy.EXPONENTIAL,
-                                backoffDelay = 30,
-                                timeUnit = TimeUnit.SECONDS,
-                            )
-                            .build(),
+        val account = accountService.getAccountById(accountId) ?: return Result.failure()
+        val service = rssService.get(account.type.id)
+        val result = if (service is LocalRssService) {
+            service.syncWithProgress(accountId, feedId, groupId) { setProgress(it.toData()) }
+        } else {
+            service.sync(accountId = accountId, feedId = feedId, groupId = groupId)
+        }
+        FeedIconWorker.enqueue(account, workManager)
+        workManager
+            .beginUniqueWork(
+                uniqueWorkName = "${POST_SYNC_WORK_NAME}_$accountId",
+                existingWorkPolicy = ExistingWorkPolicy.KEEP,
+                OneTimeWorkRequestBuilder<ReaderWorker>()
+                    .setInputData(workDataOf("accountId" to accountId))
+                    .addTag(READER_TAG)
+                    .addTag(ONETIME_WORK_TAG)
+                    .setBackoffCriteria(
+                        backoffPolicy = BackoffPolicy.EXPONENTIAL,
+                        backoffDelay = 30,
+                        timeUnit = TimeUnit.SECONDS,
                     )
-                    .then(OneTimeWorkRequestBuilder<WidgetUpdateWorker>().build())
-                    .enqueue()
-            }
+                    .build(),
+            )
+            .then(OneTimeWorkRequestBuilder<WidgetUpdateWorker>().build())
+            .enqueue()
+        return result
     }
 
     companion object {

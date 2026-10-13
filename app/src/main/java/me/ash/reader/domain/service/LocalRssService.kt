@@ -7,15 +7,10 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.Date
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.supervisorScope
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.CancellationException
+import me.ash.reader.domain.data.SyncProgress
 import me.ash.reader.domain.data.SyncLogger
 import me.ash.reader.domain.model.account.AccountType
-import me.ash.reader.domain.model.feed.Feed
 import me.ash.reader.domain.model.feed.FeedWithArticle
 import me.ash.reader.domain.repository.ArticleDao
 import me.ash.reader.domain.repository.FeedDao
@@ -59,16 +54,21 @@ constructor(
         accountId: Int,
         feedId: String?,
         groupId: String?
-    ): ListenableWorker.Result = supervisorScope {
-        return@supervisorScope runCatching {
+    ): ListenableWorker.Result = syncWithProgress(accountId, feedId, groupId)
+
+    suspend fun syncWithProgress(
+        accountId: Int,
+        feedId: String?,
+        groupId: String?,
+        onProgress: suspend (SyncProgress) -> Unit = {},
+    ): ListenableWorker.Result {
+        return try {
             val preTime = System.currentTimeMillis()
             val preDate = Date(preTime)
             val currentAccount = accountService.getAccountById(accountId)!!
             require(currentAccount.type.id == AccountType.Local.id) {
                 "Account type is invalid"
             }
-            val semaphore = Semaphore(16)
-
             val feedsToSync =
                 when {
                     feedId != null -> listOfNotNull(feedDao.queryById(feedId))
@@ -76,55 +76,40 @@ constructor(
                     else -> feedDao.queryAll(accountId)
                 }
 
-            feedsToSync
-                .mapIndexed { _, currentFeed ->
-                    async(Dispatchers.IO) {
-                        semaphore.withPermit {
-                            val archivedArticles =
-                                feedDao
-                                    .queryArchivedArticles(currentFeed.id)
-                                    .map { it.link }
-                                    .toSet()
-                            val fetchedFeed = syncFeed(currentFeed, preDate)
-                            val fetchedArticles =
-                                fetchedFeed.articles.filterNot {
-                                    archivedArticles.contains(it.link)
-                                }
-
-                            val newArticles =
-                                articleDao.insertListIfNotExist(
-                                    articles = fetchedArticles,
-                                    feed = currentFeed,
-                                )
-                            if (currentFeed.isNotification && newArticles.isNotEmpty()) {
-                                notificationHelper.notify(
-                                    fetchedFeed.copy(articles = newArticles, feed = currentFeed)
-                                )
-                            }
-                        }
-                    }
+            val progress = refreshFeeds(
+                feeds = feedsToSync,
+                dispatcher = ioDispatcher,
+                onProgress = { onProgress(it.copy(accountId = accountId, startedAt = preTime)) },
+                onFailure = { feed, error ->
+                    Timber.tag(TAG).w(error, "Failed to refresh %s", feed.name)
+                    syncLogger.log(error)
+                },
+            ) { currentFeed ->
+                val archivedArticles =
+                    feedDao.queryArchivedArticles(currentFeed.id).map { it.link }.toSet()
+                val articles = rssHelper.queryRssXml(currentFeed, null, preDate, accountId)
+                    .filterNot { archivedArticles.contains(it.link) }
+                val saveStartedAt = System.currentTimeMillis()
+                val newArticles = articleDao.insertListIfNotExist(articles, currentFeed)
+                Timber.tag(TAG).d("Saved %s (%d new articles) in %d ms", currentFeed.name, newArticles.size, System.currentTimeMillis() - saveStartedAt)
+                if (currentFeed.isNotification && newArticles.isNotEmpty()) {
+                    notificationHelper.notify(FeedWithArticle(currentFeed, newArticles))
                 }
-                .awaitAll()
+            }.copy(accountId = accountId, startedAt = preTime)
 
-            Timber.tag("RlOG").i("onCompletion: ${System.currentTimeMillis() - preTime}")
-            accountService.update(currentAccount.copy(updateAt = Date()))
-            ListenableWorker.Result.success()
-        }
-            .onFailure { syncLogger.log(it) }
-            .getOrNull() ?: ListenableWorker.Result.retry()
-    }
-
-    private suspend fun syncFeed(feed: Feed, preDate: Date = Date()): FeedWithArticle {
-        val articles = rssHelper.queryRssXml(feed, "", preDate)
-        if (feed.icon == null) {
-            val iconLink = rssHelper.queryRssIconLink(feed.url)
-            if (iconLink != null) {
-                rssHelper.saveRssIcon(feedDao, feed, iconLink)
+            Timber.tag(TAG).i("Refreshed %d feeds (%d failed) in %d ms", progress.total, progress.failed, System.currentTimeMillis() - preTime)
+            if (progress.failed < progress.total || progress.total == 0) {
+                accountService.update(currentAccount.copy(updateAt = Date()))
+                ListenableWorker.Result.success(progress.toData())
+            } else {
+                ListenableWorker.Result.failure(progress.toData())
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            syncLogger.log(e)
+            ListenableWorker.Result.failure()
         }
-        return FeedWithArticle(
-            feed = feed.copy(isNotification = feed.isNotification && articles.isNotEmpty()),
-            articles = articles,
-        )
     }
+
 }

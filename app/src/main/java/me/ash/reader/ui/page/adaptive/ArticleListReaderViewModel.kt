@@ -30,6 +30,8 @@ import me.ash.reader.domain.data.FilterState
 import me.ash.reader.domain.data.FilterStateUseCase
 import me.ash.reader.domain.data.GroupWithFeedsListUseCase
 import me.ash.reader.domain.data.PagerData
+import me.ash.reader.domain.data.SyncProgress
+import me.ash.reader.domain.service.AccountService
 import me.ash.reader.domain.model.article.Article
 import me.ash.reader.domain.model.article.ArticleFlowItem
 import me.ash.reader.domain.model.article.ArticleWithFeed
@@ -56,6 +58,7 @@ class ArticleListReaderViewModel
 @Inject
 constructor(
     private val rssService: RssService,
+    private val accountService: AccountService,
     @IODispatcher private val ioDispatcher: CoroutineDispatcher,
     @ApplicationScope private val applicationScope: CoroutineScope,
     val diffMapHolder: DiffMapHolder,
@@ -130,6 +133,12 @@ constructor(
             .getWorkInfosByTagFlow(SyncWorker.SYNC_TAG)
             .map { it.any { workInfo -> workInfo.state == WorkInfo.State.RUNNING } }
             .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    val syncProgressFlow = workManager.getWorkInfosByTagFlow(SyncWorker.SYNC_TAG)
+        .combine(accountService.currentAccountIdFlow) { workInfos, accountId ->
+            SyncProgress.fromWorkInfos(workInfos, accountId)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SyncProgress())
 
     private val _isSyncingFlow = MutableStateFlow(false)
     val isSyncingFlow = _isSyncingFlow.asStateFlow()
