@@ -4,7 +4,8 @@
 
 ```sh
 JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
-  ./gradlew :app:testGithubDebugUnitTest :app:assembleGithubDebug :app:assembleGithubDebugAndroidTest
+  ./gradlew :app:testGithubDebugUnitTest :app:testGithubReleaseUnitTest \
+    :app:assembleGithubDebug :app:assembleGithubRelease :app:assembleGithubDebugAndroidTest
 ```
 
 With an emulator running, test the Room migration and icon updates:
@@ -16,6 +17,8 @@ JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" \
 ```
 
 ## Emulator checklist
+
+The PR workflow produces an optimized release APK, which is smaller than a debug APK. Test that release APK as well as the debug build. Force-stop and reopen the app several times with an existing account, and check the All, Unread, and Starred filters: startup collectors must not encounter uninitialized flows or leave the feed list stuck loading.
 
 1. Install the debug APK as an update (do not uninstall or clear storage). Existing subscriptions, saved icons, articles, and read/starred states should survive the version 7 → 8 database migration.
 2. Open a local account with approximately 15 feeds. Previously saved articles should be readable immediately.
