@@ -15,6 +15,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -50,7 +53,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -90,6 +92,7 @@ import me.ash.reader.infrastructure.preference.LocalSortUnreadArticles
 import me.ash.reader.infrastructure.preference.PullToLoadNextFeedPreference
 import me.ash.reader.infrastructure.preference.SortUnreadArticlesPreference
 import me.ash.reader.ui.component.FilterBar
+import me.ash.reader.ui.component.FeedRefreshStatus
 import me.ash.reader.ui.component.base.FeedbackIconButton
 import me.ash.reader.ui.component.base.RYExtensibleVisibility
 import me.ash.reader.ui.component.base.RYScaffold
@@ -305,6 +308,7 @@ fun FlowPage(
     }
 
     val isSyncing = viewModel.isSyncingFlow.collectAsStateValue()
+    val syncProgress = viewModel.syncProgressFlow.collectAsStateValue()
 
     Box(modifier = Modifier.fillMaxSize()) {
         RYScaffold(
@@ -565,17 +569,6 @@ fun FlowPage(
 
                     val listState = remember(pager) { listState }
 
-                    val isSyncing by rememberUpdatedState(isSyncing)
-
-                    LaunchedEffect(pagingItems) {
-                        snapshotFlow { pagingItems.loadState.isIdle }
-                            .collect {
-                                if (isSyncing) {
-                                    listState.scrollToItem(0)
-                                }
-                            }
-                    }
-
                     val loadAction =
                         remember(pager, flowUiState, pullToSwitchFeed) {
                                 when (pullToSwitchFeed) {
@@ -708,26 +701,32 @@ fun FlowPage(
             },
             floatingActionButtonPosition = FabPosition.Center,
             bottomBar = {
-                FilterBar(
-                    modifier =
-                        with(sharedTransitionScope) {
-                            Modifier.sharedElement(
-                                sharedContentState = rememberSharedContentState("filterBar"),
-                                animatedVisibilityScope = animatedVisibilityScope,
-                            )
-                        },
-                    filter = filterUiState.filter,
-                    filterBarStyle = filterBarStyle.value,
-                    filterBarFilled = true,
-                    filterBarPadding = filterBarPadding.dp,
-                    filterBarTonalElevation = filterBarTonalElevation.value.dp,
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    if (filterUiState.filter != it) {
-                        viewModel.changeFilter(filterUiState.copy(filter = it))
-                    } else {
-                        scope.launch {
-                            if (listState.firstVisibleItemIndex != 0) {
-                                listState.animateScrollToItem(0)
+                    FeedRefreshStatus(syncProgress, modifier = Modifier.padding(horizontal = 16.dp))
+                    FilterBar(
+                        modifier =
+                            with(sharedTransitionScope) {
+                                Modifier.sharedElement(
+                                    sharedContentState = rememberSharedContentState("filterBar"),
+                                    animatedVisibilityScope = animatedVisibilityScope,
+                                )
+                            },
+                        filter = filterUiState.filter,
+                        filterBarStyle = filterBarStyle.value,
+                        filterBarFilled = true,
+                        filterBarPadding = filterBarPadding.dp,
+                        filterBarTonalElevation = filterBarTonalElevation.value.dp,
+                    ) {
+                        if (filterUiState.filter != it) {
+                            viewModel.changeFilter(filterUiState.copy(filter = it))
+                        } else {
+                            scope.launch {
+                                if (listState.firstVisibleItemIndex != 0) {
+                                    listState.animateScrollToItem(0)
+                                }
                             }
                         }
                     }

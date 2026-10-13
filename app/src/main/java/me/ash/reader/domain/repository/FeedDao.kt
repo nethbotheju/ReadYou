@@ -143,6 +143,25 @@ interface FeedDao {
     )
     suspend fun queryNoIcon(accountId: Int): List<Feed>
 
+    @Query("""
+        UPDATE feed SET icon = :icon, iconRetryAfter = 0
+        WHERE id = :feedId AND url = :url
+    """)
+    suspend fun updateIcon(feedId: String, url: String, icon: String)
+
+    @Query("""
+        UPDATE feed SET iconRetryAfter = :retryAfter
+        WHERE id = :feedId AND url = :url
+        AND (icon IS NULL OR icon = '') AND iconRetryAfter <= :now
+    """)
+    suspend fun claimIconLookup(feedId: String, url: String, now: Long, retryAfter: Long): Int
+
+    @Query("""
+        UPDATE feed SET icon = :icon, iconRetryAfter = 0
+        WHERE id = :feedId AND url = :url AND (icon IS NULL OR icon = '')
+    """)
+    suspend fun saveMissingIcon(feedId: String, url: String, icon: String)
+
     @Query(
         """
         SELECT * FROM feed
@@ -186,6 +205,7 @@ interface FeedDao {
                 val updated =
                     new.copy(
                         icon = if (new.icon.isNullOrEmpty()) existing.icon else new.icon,
+                        iconRetryAfter = if (new.url == existing.url) existing.iconRetryAfter else 0,
                         isNotification = existing.isNotification,
                         isFullContent = existing.isFullContent,
                         isBrowser = existing.isBrowser,

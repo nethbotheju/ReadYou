@@ -22,15 +22,19 @@ constructor(
     @Assisted workerParams: WorkerParameters,
     private val rssService: RssService,
     private val cacheHelper: ReaderCacheHelper,
+    private val accountService: AccountService,
 ) : CoroutineWorker(context, workerParams) {
 
     override suspend fun doWork(): Result {
+        val accountId = inputData.getInt("accountId", accountService.getCurrentAccountId())
+        val account = accountService.getAccountById(accountId) ?: return Result.failure()
+        val service = rssService.get(account.type.id)
+        service.clearKeepArchivedArticles(accountId).forEach { cacheHelper.deleteCacheFor(it.id) }
         val semaphore = Semaphore(2)
 
         val deferredList =
             withContext(Dispatchers.IO) {
-                val rssService = rssService.get()
-                val articleList = rssService.queryUnreadFullContentArticles()
+                val articleList = service.queryUnreadFullContentArticles(accountId)
                 articleList.map {
                     async { semaphore.withPermit { cacheHelper.checkOrFetchFullContent(it) } }
                 }

@@ -149,9 +149,10 @@ abstract class AbstractRssRepository(
         articleDao.markAsStarredByArticleId(accountId, articleId, isStarred)
     }
 
-    suspend fun clearKeepArchivedArticles(): List<Article> {
-        val accountId = accountService.getCurrentAccountId()
-        val currentAccount = accountService.getCurrentAccount()
+    suspend fun clearKeepArchivedArticles(
+        accountId: Int = accountService.getCurrentAccountId(),
+    ): List<Article> {
+        val currentAccount = accountService.getAccountById(accountId) ?: return emptyList()
         val keepArchived = currentAccount.keepArchived
         if (keepArchived != KeepArchivedPreference.Always) {
             val archivedArticles =
@@ -484,6 +485,7 @@ abstract class AbstractRssRepository(
         }
     }
 
-    suspend fun queryUnreadFullContentArticles() =
-        articleDao.queryUnreadFullContentArticles(accountService.getCurrentAccountId())
+    suspend fun queryUnreadFullContentArticles(
+        accountId: Int = accountService.getCurrentAccountId(),
+    ) = articleDao.queryUnreadFullContentArticles(accountId)
 }

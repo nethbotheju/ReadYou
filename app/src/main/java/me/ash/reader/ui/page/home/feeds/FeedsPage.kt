@@ -70,6 +70,7 @@ import me.ash.reader.infrastructure.preference.LocalFeedsTopBarTonalElevation
 import me.ash.reader.infrastructure.preference.LocalNewVersionNumber
 import me.ash.reader.infrastructure.preference.LocalSkipVersionNumber
 import me.ash.reader.ui.component.FilterBar
+import me.ash.reader.ui.component.FeedRefreshStatus
 import me.ash.reader.ui.component.base.DisplayText
 import me.ash.reader.ui.component.base.FeedbackIconButton
 import me.ash.reader.ui.component.base.RYScaffold
@@ -118,6 +119,7 @@ fun FeedsPage(
     val feedsUiState = feedsViewModel.feedsUiState.collectAsStateValue()
     val filterState = feedsViewModel.filterStateFlow.collectAsStateValue()
     val importantSum = feedsUiState.importantSum
+    val syncProgress = feedsViewModel.syncProgressFlow.collectAsStateValue()
     val groupWithFeedList = feedsViewModel.groupWithFeedsListFlow.collectAsStateValue()
     val groupsVisible: SnapshotStateMap<String, Boolean> = feedsUiState.groupsVisible
     val hasGroupVisible by
@@ -195,7 +197,7 @@ fun FeedsPage(
                         indication = null,
                         interactionSource = remember { MutableInteractionSource() },
                     ),
-                title = {},
+                title = { FeedRefreshStatus(syncProgress) },
                 navigationIcon = {
                     FeedbackIconButton(
                         modifier = Modifier.size(20.dp),
